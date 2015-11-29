@@ -5,20 +5,15 @@ import os
 import sys
 import time
 import socket
-try:
-    import urllib.request as urllib
-except ImportError:
-    import urllib
+import six.moves.urllib as urllib
 import hashlib
 import logging
 
 from zeroconf import ServiceInfo, Zeroconf
-try:
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-except ImportError:
-    from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from six.moves.BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 from . import utils
+from . import crypto
 from .utils import _
 import argparse
 
@@ -56,7 +51,7 @@ class FileHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in map(
-            lambda x: urllib.pathname2url(os.path.join('/', x)),
+            lambda x: urllib.request.pathname2url(os.path.join('/', x)),
             self.server.allowed_basenames
         ):
             utils.logger.info(_("Peer found. Uploading..."))
@@ -71,7 +66,10 @@ class FileHandler(BaseHTTPRequestHandler):
                         self.server.filename
                     )
                 )
-                self.send_header('Content-length', maxsize)
+                self.send_header(
+                    'Content-length',
+                    self.server.ciphersuite.size(maxsize)
+                )
                 self.end_headers()
 
                 i = 0
@@ -79,10 +77,11 @@ class FileHandler(BaseHTTPRequestHandler):
                     data = fh.read(1024 * 8)  # chunksize taken from urllib
                     if not data:
                         break
-                    self.wfile.write(data)
+                    self.wfile.write(self.server.ciphersuite.process(data))
                     if self.server.reporthook is not None:
                         self.server.reporthook(i, 1024 * 8, maxsize)
                     i += 1
+                self.wfile.write(self.server.ciphersuite.finalize())
             self.server.downloaded = True
 
         else:
@@ -106,7 +105,7 @@ def cli(inargs=None):
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        '--port', '-p',
+        '--port', '-P',
         type=int, nargs='?', metavar=_("PORT"),
         help=_("The port to share the file on")
     )
@@ -135,6 +134,11 @@ def cli(inargs=None):
         help=_("Set timeout after which program aborts transfer")
     )
     parser.add_argument(
+        '--password', '-p',
+        metavar=_("PASSWORD"),
+        help=_("Password for transfer encryption")
+    )
+    parser.add_argument(
         '--version', '-V',
         action='version',
         version='%%(prog)s %s' % utils.__version__
@@ -151,6 +155,16 @@ def cli(inargs=None):
     args = parser.parse_args(inargs)
 
     utils.enable_logger(args.verbose)
+
+    if args.password is not None:
+        try:
+            ciphersuite = crypto.aes.encrypt(args.password)
+        except ImportError:
+            raise ImportError(_(
+                "Could not load cipher suite. Did you install cryptography?"
+            ))
+    else:
+        ciphersuite = crypto.bypass.encrypt()
 
     try:
         if not os.path.isfile(args.input):
@@ -180,6 +194,7 @@ def cli(inargs=None):
                 port=args.port,
                 reporthook=progress if args.quiet == 0 else None,
                 timeout=args.timeout,
+                ciphersuite=ciphersuite,
             )
     except Exception as e:
         if args.verbose:
@@ -196,6 +211,7 @@ def put(
     port=None,
     reporthook=None,
     timeout=None,
+    ciphersuite=None,
 ):
     """Send a file using the zget protocol.
 
@@ -235,6 +251,9 @@ def put(
     if not 0 <= port <= 65535:
         raise ValueError(_("Port %d exceeds allowed range") % port)
 
+    if ciphersuite is None:
+        ciphersuite = crypto.bypass.encrypt()
+
     basename = os.path.basename(filename)
 
     filehashes = []
@@ -255,6 +274,7 @@ def put(
     if output is not None:
         server.allowed_basenames.append(output)
     server.reporthook = reporthook
+    server.ciphersuite = ciphersuite
 
     port = server.server_port
 

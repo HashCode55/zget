@@ -40,6 +40,7 @@ Done.""",
         packages=setuptools.find_packages(),
 
         install_requires=[
+            'six',
             'zeroconf',
             'netifaces',
             'progressbar2',
@@ -51,6 +52,9 @@ Done.""",
         ],
 
         extras_require={
+            'crypto': [
+                'cryptography',
+            ],
             'docs': [
                 'sphinx',
                 'sphinxcontrib-napoleon',
@@ -58,6 +62,7 @@ Done.""",
                 'numpydoc',
             ],
             'tests': [
+                'cryptography',
                 'pytest',
                 'pytest-cov',
                 'pytest-pep8',

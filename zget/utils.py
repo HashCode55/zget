@@ -8,13 +8,8 @@ import netifaces
 import gettext
 import logging
 import progressbar
-try:
-    import configparser
-    xrange = range
-    maxsize = sys.maxsize
-except ImportError:
-    import ConfigParser as configparser
-    maxsize = sys.maxint
+from six.moves import configparser, range
+from six import MAXSIZE
 
 t = gettext.translation(
     'zget',
@@ -166,7 +161,7 @@ def ip_addr(interface):
         raise ValueError(_("You have selected an invalid interface"))
 
 
-def unique_filename(filename, limit=maxsize):
+def unique_filename(filename, limit=MAXSIZE):
     if not os.path.exists(filename):
         return filename
 
@@ -176,7 +171,7 @@ def unique_filename(filename, limit=maxsize):
     def make_filename(i):
         return os.path.join(path, '%s_%d%s' % (name, i, ext))
 
-    for i in xrange(1, limit):
+    for i in range(1, limit):
         unique_filename = make_filename(i)
         if not os.path.exists(unique_filename):
             return unique_filename
@@ -190,8 +185,14 @@ def unique_filename(filename, limit=maxsize):
 def urlretrieve(
     url,
     output=None,
-    reporthook=None
+    reporthook=None,
+    ciphersuite=None,
 ):
+    from . import crypto
+
+    if ciphersuite is None:
+        ciphersuite = crypto.bypass.decrypt()
+
     r = requests.get(url, stream=True)
     try:
         maxsize = int(r.headers['content-length'])
@@ -215,9 +216,10 @@ def urlretrieve(
     with open(filename, 'wb') as f:
         for i, chunk in enumerate(r.iter_content(chunk_size=1024 * 8)):
             if chunk:
-                f.write(chunk)
+                f.write(ciphersuite.process(chunk))
                 if reporthook is not None:
                     reporthook(i, 1024 * 8, maxsize)
+        f.write(ciphersuite.finalize())
 
 
 def generate_alias(length=4):
